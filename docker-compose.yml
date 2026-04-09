@@ -1,0 +1,366 @@
+version: "3.9"
+
+# ============================================================
+#  SI3009 — Proyecto 2: Arquitecturas Distribuidas
+#  Red social simplificada
+#  Dominio: usuarios, posts, follows, likes
+# ============================================================
+#
+#  Topología:
+#    pgnode1  → Primary (shard 1–3000)    + replica pgnode1r
+#    pgnode2  → Primary (shard 3001–6000) + replica pgnode2r
+#    pgnode3  → Primary (shard 6001–10000)+ replica pgnode3r
+#    crdb1/2/3 → Cluster CockroachDB 3 nodos
+#
+#  Latencia simulada con tc-netem via init containers:
+#    Entre nodos PostgreSQL: 10 ms
+#    Entre nodos CockroachDB: 20 ms (simula geo-distribución)
+# ============================================================
+
+networks:
+  pgnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+  crdbnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/24
+
+# ── Volúmenes persistentes ──────────────────────────────────
+volumes:
+  pgdata1:
+  pgdata1r:
+  pgdata2:
+  pgdata2r:
+  pgdata3:
+  pgdata3r:
+  crdb1:
+  crdb2:
+  crdb3:
+
+services:
+
+  # ══════════════════════════════════════════════════════════
+  #  POSTGRESQL — Nodo 1 (Primary, shard user_id 1–3000)
+  # ══════════════════════════════════════════════════════════
+  pgnode1:
+    image: postgres:15-alpine
+    container_name: pgnode1
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: socialdb
+    command: >
+      postgres
+        -c wal_level=replica
+        -c max_wal_senders=5
+        -c wal_keep_size=64
+        -c synchronous_standby_names='pgnode1r'
+        -c synchronous_commit=on
+        -c max_prepared_transactions=20
+        -c log_min_duration_statement=100
+        -c shared_preload_libraries=pg_stat_statements
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata1:/var/lib/postgresql/data
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    networks:
+      pgnet:
+        ipv4_address: 172.20.0.11
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d socialdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Réplica de Nodo 1 ─────────────────────────────────────
+  pgnode1r:
+    image: postgres:15-alpine
+    container_name: pgnode1r
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGPASSWORD: postgres
+    command: >
+      bash -c "
+        until pg_isready -h pgnode1 -U postgres; do sleep 2; done;
+        if [ ! -f /var/lib/postgresql/data/PG_VERSION ]; then
+          pg_basebackup -h pgnode1 -U postgres -D /var/lib/postgresql/data -P -Xs -R;
+        fi;
+        postgres -c hot_standby=on
+      "
+    volumes:
+      - pgdata1r:/var/lib/postgresql/data
+    depends_on:
+      pgnode1:
+        condition: service_healthy
+    networks:
+      pgnet:
+        ipv4_address: 172.20.0.12
+    ports:
+      - "5433:5432"
+
+  # ══════════════════════════════════════════════════════════
+  #  POSTGRESQL — Nodo 2 (Primary, shard user_id 3001–6000)
+  # ══════════════════════════════════════════════════════════
+  pgnode2:
+    image: postgres:15-alpine
+    container_name: pgnode2
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: socialdb
+    command: >
+      postgres
+        -c wal_level=replica
+        -c max_wal_senders=5
+        -c wal_keep_size=64
+        -c synchronous_standby_names='pgnode2r'
+        -c synchronous_commit=on
+        -c max_prepared_transactions=20
+        -c log_min_duration_statement=100
+        -c shared_preload_libraries=pg_stat_statements
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata2:/var/lib/postgresql/data
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    networks:
+      pgnet:
+        ipv4_address: 172.20.0.13
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d socialdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgnode2r:
+    image: postgres:15-alpine
+    container_name: pgnode2r
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGPASSWORD: postgres
+    command: >
+      bash -c "
+        until pg_isready -h pgnode2 -U postgres; do sleep 2; done;
+        if [ ! -f /var/lib/postgresql/data/PG_VERSION ]; then
+          pg_basebackup -h pgnode2 -U postgres -D /var/lib/postgresql/data -P -Xs -R;
+        fi;
+        postgres -c hot_standby=on
+      "
+    volumes:
+      - pgdata2r:/var/lib/postgresql/data
+    depends_on:
+      pgnode2:
+        condition: service_healthy
+    networks:
+      pgnet:
+        ipv4_address: 172.20.0.14
+    ports:
+      - "5435:5432"
+
+  # ══════════════════════════════════════════════════════════
+  #  POSTGRESQL — Nodo 3 (Primary, shard user_id 6001–10000)
+  # ══════════════════════════════════════════════════════════
+  pgnode3:
+    image: postgres:15-alpine
+    container_name: pgnode3
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: socialdb
+    command: >
+      postgres
+        -c wal_level=replica
+        -c max_wal_senders=5
+        -c wal_keep_size=64
+        -c synchronous_standby_names='pgnode3r'
+        -c synchronous_commit=on
+        -c max_prepared_transactions=20
+        -c log_min_duration_statement=100
+        -c shared_preload_libraries=pg_stat_statements
+    ports:
+      - "5436:5432"
+    volumes:
+      - pgdata3:/var/lib/postgresql/data
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    networks:
+      pgnet:
+        ipv4_address: 172.20.0.15
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d socialdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgnode3r:
+    image: postgres:15-alpine
+    container_name: pgnode3r
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGPASSWORD: postgres
+    command: >
+      bash -c "
+        until pg_isready -h pgnode3 -U postgres; do sleep 2; done;
+        if [ ! -f /var/lib/postgresql/data/PG_VERSION ]; then
+          pg_basebackup -h pgnode3 -U postgres -D /var/lib/postgresql/data -P -Xs -R;
+        fi;
+        postgres -c hot_standby=on
+      "
+    volumes:
+      - pgdata3r:/var/lib/postgresql/data
+    depends_on:
+      pgnode3:
+        condition: service_healthy
+    networks:
+      pgnet:
+        ipv4_address: 172.20.0.16
+    ports:
+      - "5437:5432"
+
+  # ══════════════════════════════════════════════════════════
+  #  Latency injector — simula 10 ms entre nodos PostgreSQL
+  #  Requiere NET_ADMIN capability y tc disponible
+  # ══════════════════════════════════════════════════════════
+  pg-latency:
+    image: alpine:3.19
+    container_name: pg-latency
+    cap_add:
+      - NET_ADMIN
+    network_mode: "service:pgnode1"
+    depends_on:
+      - pgnode1
+      - pgnode2
+      - pgnode3
+    command: >
+      sh -c "
+        apk add --no-cache iproute2 &&
+        tc qdisc add dev eth0 root netem delay 10ms 2ms &&
+        echo 'Latencia de 10ms aplicada en pgnet' &&
+        sleep infinity
+      "
+    restart: unless-stopped
+
+  # ══════════════════════════════════════════════════════════
+  #  COCKROACHDB — Nodo 1
+  # ══════════════════════════════════════════════════════════
+  crdb1:
+    image: cockroachdb/cockroach:v23.2.0
+    container_name: crdb1
+    command: >
+      start --insecure
+        --store=/cockroach/cockroach-data
+        --listen-addr=crdb1:26257
+        --advertise-addr=crdb1:26257
+        --http-addr=crdb1:8080
+        --join=crdb1:26257,crdb2:26257,crdb3:26257
+        --locality=region=simulated,zone=az1
+    ports:
+      - "26257:26257"
+      - "8080:8080"
+    volumes:
+      - crdb1:/cockroach/cockroach-data
+    networks:
+      crdbnet:
+        ipv4_address: 172.21.0.11
+    healthcheck:
+      test: ["CMD", "cockroach", "node", "status", "--insecure", "--host=crdb1:26257"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+
+  # ══════════════════════════════════════════════════════════
+  #  COCKROACHDB — Nodo 2
+  # ══════════════════════════════════════════════════════════
+  crdb2:
+    image: cockroachdb/cockroach:v23.2.0
+    container_name: crdb2
+    command: >
+      start --insecure
+        --store=/cockroach/cockroach-data
+        --listen-addr=crdb2:26257
+        --advertise-addr=crdb2:26257
+        --http-addr=crdb2:8081
+        --join=crdb1:26257,crdb2:26257,crdb3:26257
+        --locality=region=simulated,zone=az2
+    ports:
+      - "26258:26257"
+      - "8081:8081"
+    volumes:
+      - crdb2:/cockroach/cockroach-data
+    networks:
+      crdbnet:
+        ipv4_address: 172.21.0.12
+
+  # ══════════════════════════════════════════════════════════
+  #  COCKROACHDB — Nodo 3
+  # ══════════════════════════════════════════════════════════
+  crdb3:
+    image: cockroachdb/cockroach:v23.2.0
+    container_name: crdb3
+    command: >
+      start --insecure
+        --store=/cockroach/cockroach-data
+        --listen-addr=crdb3:26257
+        --advertise-addr=crdb3:26257
+        --http-addr=crdb3:8082
+        --join=crdb1:26257,crdb2:26257,crdb3:26257
+        --locality=region=simulated,zone=az3
+    ports:
+      - "26259:26257"
+      - "8082:8082"
+    volumes:
+      - crdb3:/cockroach/cockroach-data
+    networks:
+      crdbnet:
+        ipv4_address: 172.21.0.13
+
+  # ── Init: inicializa el cluster CRDB una sola vez ──────────
+  crdb-init:
+    image: cockroachdb/cockroach:v23.2.0
+    container_name: crdb-init
+    networks:
+      - crdbnet
+    depends_on:
+      crdb1:
+        condition: service_healthy
+    command: >
+      bash -c "
+        cockroach init --insecure --host=crdb1:26257 || true &&
+        cockroach sql --insecure --host=crdb1:26257 --execute=\"
+          CREATE DATABASE IF NOT EXISTS socialdb;
+          SET CLUSTER SETTING kv.range_merge.queue_enabled = true;
+          SET CLUSTER SETTING server.time_until_store_dead = '1m30s';
+        \"
+      "
+    restart: "no"
+
+  # ── Latency injector CRDB (simula 20 ms geo-dist.) ─────────
+  crdb-latency:
+    image: alpine:3.19
+    container_name: crdb-latency
+    cap_add:
+      - NET_ADMIN
+    network_mode: "service:crdb1"
+    depends_on:
+      - crdb1
+    command: >
+      sh -c "
+        apk add --no-cache iproute2 &&
+        tc qdisc add dev eth0 root netem delay 20ms 5ms &&
+        echo 'Latencia de 20ms aplicada en crdbnet' &&
+        sleep infinity
+      "
+    restart: unless-stopped

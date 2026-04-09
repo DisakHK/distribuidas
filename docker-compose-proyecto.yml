@@ -1,0 +1,64 @@
+﻿version: "3.9"
+services:
+  pgnode1:
+    image: postgres:15-alpine
+    container_name: pgnode1
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: socialdb
+    command: postgres -c max_prepared_transactions=20 -c wal_level=replica -c max_wal_senders=3 -c synchronous_commit=on
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d socialdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pgnode2:
+    image: postgres:15-alpine
+    container_name: pgnode2
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: socialdb
+    command: postgres -c max_prepared_transactions=20 -c wal_level=replica -c max_wal_senders=3 -c synchronous_commit=on
+    ports: ["5434:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d socialdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pgnode3:
+    image: postgres:15-alpine
+    container_name: pgnode3
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: socialdb
+    command: postgres -c max_prepared_transactions=20 -c wal_level=replica -c max_wal_senders=3 -c synchronous_commit=on
+    ports: ["5436:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d socialdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  crdb1:
+    image: cockroachdb/cockroach:v23.2.0
+    container_name: crdb1
+    command: start --insecure --store=/cockroach/cockroach-data --listen-addr=crdb1:26257 --advertise-addr=crdb1:26257 --http-addr=0.0.0.0:8080 --join=crdb1:26257,crdb2:26257,crdb3:26257
+    ports: ["26257:26257", "8080:8080"]
+
+  crdb2:
+    image: cockroachdb/cockroach:v23.2.0
+    container_name: crdb2
+    command: start --insecure --store=/cockroach/cockroach-data --listen-addr=crdb2:26257 --advertise-addr=crdb2:26257 --http-addr=0.0.0.0:8081 --join=crdb1:26257,crdb2:26257,crdb3:26257
+    ports: ["26258:26257", "8081:8081"]
+
+  crdb3:
+    image: cockroachdb/cockroach:v23.2.0
+    container_name: crdb3
+    command: start --insecure --store=/cockroach/cockroach-data --listen-addr=crdb3:26257 --advertise-addr=crdb3:26257 --http-addr=0.0.0.0:8082 --join=crdb1:26257,crdb2:26257,crdb3:26257
+    ports: ["26259:26257", "8082:8082"]
